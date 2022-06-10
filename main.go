@@ -1,16 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"database/sql"
 	"flag"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
-	"io/ioutil"
 	"log"
 	"os"
-	"path"
+    "path/filepath"
 )
 
 type Category struct {
@@ -28,16 +26,40 @@ type Article struct {
 	Media []string
 }
 
-func (a *Article) update(root string) {
-	file, err := os.Open(path.Join(root, fmt.Sprintf("%d.md", a.AID)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+func (a *Article) update(root string, target string, catMap map[uint64]*Category) {
+    if _, err := os.Stat(filepath.Join(root, fmt.Sprintf("%d.md", a.AID))); os.IsNotExist(err) {
+        fmt.Printf("%d.md does not exist\n", a.AID)
+        return
+    }
 
-	scanner := bufio.NewScanner(file)
-	scanner.Scan()
-	a.Name = scanner.Text()[2:]
+    if err := os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID))); err != nil {
+        log.Fatalf("can't change filepath %s to %s due to %v", filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID)), err)
+    }
+
+    if _, err := os.Stat(filepath.Join(root, "media", fmt.Sprintf("%d", a.AID))); os.IsNotExist(err) {
+        return
+    }
+    var files []string
+    err := filepath.Walk(filepath.Join(root, "media", fmt.Sprintf("%d", a.AID)), func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if !info.IsDir() {
+            files = append(files, path)
+        }
+        return nil
+    })
+    if err != nil {
+        log.Fatalf("read directory error due to %v", err)
+    }
+    for _, file := range files {
+        if err := os.MkdirAll(filepath.Join(target, catMap[a.RID].Name, "media", fmt.Sprintf("%d", a.AID)), os.ModePerm); err != nil {
+            log.Fatalf("Error while creating media directory under %s/%d", catMap[a.RID].Name, a.AID)
+        }
+        if err := os.Rename(file, filepath.Join(target, catMap[a.RID].Name, "media", fmt.Sprintf("%d", a.AID), filepath.Base(file))); err != nil {
+            log.Fatalf("can't change path %s to %s", file, filepath.Join(target, catMap[a.RID].Name, "media", fmt.Sprintf("%d", a.AID), filepath.Base(file)))
+        }
+    }
 }
 
 func tree(cat *Category, deep int, buff *bytes.Buffer) {
@@ -114,13 +136,10 @@ func makeCategoryTree(root *Category, input []*Category) []*Category {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
 	pwd, _ := os.Getwd()
-	libDefaultPath := home + "/Library/Containers/com.coderforart.MWeb3/Data/Library/Application Support/MWebLibrary"
 
-	lib := flag.String("path", libDefaultPath, "path to MWebLibrary")
+	lib := flag.String("path", pwd, "path to MWebLibrary")
 	target := flag.String("target", pwd, "export README.md directory")
-	mode := flag.String("mode", "debug", "'save': save file, 'debug': print only")
 	help := flag.Bool("help", false, "show usage")
 
 	flag.Parse()
@@ -134,7 +153,7 @@ func main() {
 		log.Fatalf("You must set MWebLibrary path")
 	}
 
-	sqlPath := path.Join(*lib, "mainlib.db")
+	sqlPath := filepath.Join(*lib, "mainlib.db")
 	db, dErr := sql.Open("sqlite3", sqlPath)
 	if dErr != nil {
 		log.Fatalf("Open database  fail: %v", dErr)
@@ -151,32 +170,18 @@ func main() {
 	}
 
 	catMap := map[uint64]*Category{}
-	var root *Category
-	var buffer bytes.Buffer
 
 	for _, category := range cat {
 		catMap[category.UUID] = category
-		//fmt.Printf("%d: %s\n", category.UUID, category.Name)
-		if category.PID == 0 {
-			root = category
-		}
+
+        if err := os.MkdirAll(filepath.Join(*target, category.Name), os.ModePerm); err != nil {
+            log.Fatalf("Error while creating directory: %s", category.Name)
+        }
+        if err := os.MkdirAll(filepath.Join(*target, category.Name, "media"), os.ModePerm); err != nil {
+            log.Fatalf("Error while creating media directory under %s", category.Name)
+        }
 	}
 	for _, article := range art {
-		article.update(path.Join(*lib, "docs"))
-		//fmt.Printf("%d-%d: %s\n", article.AID, article.RID, article.Name)
-		if c, ok := catMap[article.RID]; ok {
-			c.Article = append(c.Article, article)
-		}
-	}
-	makeCategoryTree(root, cat)
-	buffer.WriteString("# NoteBook\n\n")
-	tree(root, 0, &buffer)
-
-	if *mode == "save" {
-		ioutil.WriteFile(path.Join(*target, "README.md"), buffer.Bytes(), 0644)
-	} else if *mode == "debug" {
-		fmt.Print(buffer.String())
-	} else {
-		fmt.Print("Unknown mode")
+		article.update(filepath.Join(*lib, "docs"), *target, catMap)
 	}
 }
