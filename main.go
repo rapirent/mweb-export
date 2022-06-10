@@ -8,7 +8,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"os"
+    "bufio"
     "path/filepath"
+    "strings"
 )
 
 type Category struct {
@@ -27,20 +29,40 @@ type Article struct {
 }
 
 func (a *Article) update(root string, target string, catMap map[uint64]*Category) {
-    if _, err := os.Stat(filepath.Join(root, fmt.Sprintf("%d.md", a.AID))); os.IsNotExist(err) {
-        fmt.Printf("%d.md does not exist\n", a.AID)
-        return
+    name := ""
+    var ferr, err error
+	if file, ferr := os.Open(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)));  ferr == nil {
+        defer file.Close()
+        scanner := bufio.NewScanner(file)
+        scanner.Scan()
+        name = scanner.Text()[2:]
+        name = strings.Replace(name, "/", "-", -1)
+	} else {
+		log.Print(ferr)
     }
 
-    if err := os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID))); err != nil {
-        log.Fatalf("can't change filepath %s to %s due to %v", filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID)), err)
+
+    if name != "" {
+        if _, err := os.Stat(filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name))); os.IsNotExist(err) {
+            err = os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name)))
+        }
+    } else {
+        err = nil
+    }
+
+    if ferr != nil || err != nil || name == "" {
+        if err = os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID))) ; err != nil {
+            log.Printf("can't change filepath to %s \n due to %v \n",
+                filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%d.md", a.AID)), err)
+            return
+        }
     }
 
     if _, err := os.Stat(filepath.Join(root, "media", fmt.Sprintf("%d", a.AID))); os.IsNotExist(err) {
         return
     }
     var files []string
-    err := filepath.Walk(filepath.Join(root, "media", fmt.Sprintf("%d", a.AID)), func(path string, info os.FileInfo, err error) error {
+    err = filepath.Walk(filepath.Join(root, "media", fmt.Sprintf("%d", a.AID)), func(path string, info os.FileInfo, err error) error {
         if err != nil {
             return err
         }
