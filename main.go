@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -11,6 +10,7 @@ import (
     "bufio"
     "path/filepath"
     "strings"
+    "errors"
 )
 
 type Category struct {
@@ -30,21 +30,22 @@ type Article struct {
 
 func (a *Article) update(root string, target string, catMap map[uint64]*Category) {
     name := ""
-    var ferr, err error
-	if file, ferr := os.Open(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)));  ferr == nil {
+    var err error
+    file, ferr := os.Open(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)))
+    if ferr == nil {
         defer file.Close()
         scanner := bufio.NewScanner(file)
         scanner.Scan()
         name = scanner.Text()[2:]
         name = strings.Replace(name, "/", "-", -1)
-	} else {
-		log.Print(ferr)
-    }
-
+	}
 
     if name != "" {
-        if _, err := os.Stat(filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name))); os.IsNotExist(err) {
-            err = os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name)))
+        _, err := os.Stat(filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name)))
+        if os.IsNotExist(err) {
+            ferr = os.Rename(filepath.Join(root, fmt.Sprintf("%d.md", a.AID)), filepath.Join(target, catMap[a.RID].Name, fmt.Sprintf("%s.md", name)))
+        } else {
+            ferr = errors.New("file not exist")
         }
     } else {
         err = nil
@@ -82,20 +83,6 @@ func (a *Article) update(root string, target string, catMap map[uint64]*Category
             log.Fatalf("can't change path %s to %s", file, filepath.Join(target, catMap[a.RID].Name, "media", fmt.Sprintf("%d", a.AID), filepath.Base(file)))
         }
     }
-}
-
-func tree(cat *Category, deep int, buff *bytes.Buffer) {
-	space := ""
-	for i := 0; i < deep; i++ {
-		space = space + "  "
-	}
-	buff.WriteString(fmt.Sprintf("%s- %s\n", space, cat.Name))
-	for _, article := range cat.Article {
-		buff.WriteString(fmt.Sprintf("%s  - [%s](./docs/%d.md)\n", space, article.Name, article.AID))
-	}
-	for _, category := range cat.SubCategory {
-		tree(category, deep+1, buff)
-	}
 }
 
 func categories(db *sql.DB) ([]*Category, error) {
